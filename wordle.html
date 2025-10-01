@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Wordle — Prototype</title>
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#0f1724; --tile:#111827; --text:#e6eef8;
+      --absent:#3a3a3c; --present:#b59f3b; --correct:#538d4e;
+      --accent:#7c5cff;
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+    html,body{height:100%;}
+    body{
+      margin:0; background:linear-gradient(180deg,#05060a 0%, #071022 60%); color:var(--text);
+      display:flex; align-items:center; justify-content:center; padding:24px;
+    }
+    .wrap{width:420px; max-width:96%;}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    .controls{display:flex;gap:8px}
+    button.btn{background:transparent;border:1px solid rgba(255,255,255,0.08);color:var(--text);padding:6px 10px;border-radius:8px;cursor:pointer}
+    button.btn:hover{border-color:rgba(255,255,255,0.12)}
+
+    .board{display:grid;gap:8px;margin:14px 0}
+    .row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+    .tile{height:64px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.06));border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;letter-spacing:4px;color:var(--text);text-transform:uppercase}
+    .tile.filled{box-shadow:inset 0 -4px 0 rgba(0,0,0,0.6)}
+    .tile.flip{animation:flip 560ms ease-in-out both}
+    @keyframes flip{0%{transform:rotateX(0); }50%{transform:rotateX(90deg); }100%{transform:rotateX(0);}}
+    .tile.absent{background:var(--absent);}
+    .tile.present{background:var(--present);}
+    .tile.correct{background:var(--correct);}
+
+    .keyboard{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+    .keyrow{display:flex;gap:6px;justify-content:center}
+    .key{padding:10px 12px;border-radius:6px;min-width:36px;text-align:center;cursor:pointer;border:0;background:#111420;color:var(--text);font-weight:700}
+    .key.wide{min-width:64px}
+    .key.absent{background:var(--absent);color:#fff}
+    .key.present{background:var(--present);color:#fff}
+    .key.correct{background:var(--correct);color:#fff}
+
+    .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:30px;background:rgba(20,25,35,0.9);padding:10px 16px;border-radius:10px;border:1px solid rgba(255,255,255,0.04)}
+
+    .meta{font-size:13px;color:rgba(255,255,255,0.6);margin-top:8px}
+
+    footer{margin-top:12px;font-size:13px;color:rgba(255,255,255,0.6)}
+  </style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-label="Wordle prototype">
+    <header>
+      <h1>Wordle — Prototype</h1>
+      <div class="controls">
+        <button class="btn" id="new">New</button>
+        <button class="btn" id="share">Share</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="board" id="board" aria-hidden="false"></div>
+      <div class="keyboard" id="keyboard"></div>
+      <div class="meta">5-letter words · 6 guesses</div>
+    </main>
+
+    <footer>
+      Tip: Use your physical keyboard or on-screen keys. This is a small offline prototype.
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script>
+    // Small word lists for prototype. Two arrays: solutions and allowed guesses.
+    const SOLUTIONS = [
+      'apple','bench','crane','drive','eagle','flame','grace','house','index','jelly','knock','light','mango','night','ocean','pride','queen','river','stone','trial','urban','vivid','wedge','xenon','yacht','zebra'
+    ];
+    const ALLOWED = [
+      // include solutions also in allowed
+      ...SOLUTIONS,
+      'about','again','broad','carry','daily','early','faith','giant','happy','ideal','joint','karma','lemon','major','noble','optic','party','quiet','round','super','tiger','union','vocal','watch','young','zesty'
+    ];
+
+    const WORD_LENGTH = 5;
+    const MAX_GUESSES = 6;
+
+    // State
+    let solution = '';
+    let guesses = []; // array of strings
+    let current = '';
+    let status = 'playing'; // 'playing','won','lost'
+
+    // Elements
+    const boardEl = document.getElementById('board');
+    const keyboardEl = document.getElementById('keyboard');
+    const toastEl = document.getElementById('toast');
+    const newBtn = document.getElementById('new');
+    const shareBtn = document.getElementById('share');
+
+    function pickSolution(){
+      const todaySeed = Math.floor(Date.now() / (1000*60*60*24));
+      // deterministic pick so same day -> same word
+      const idx = todaySeed % SOLUTIONS.length;
+      solution = SOLUTIONS[idx];
+    }
+
+    function showToast(msg, time=2000){
+      toastEl.textContent = msg; toastEl.style.display='block';
+      setTimeout(()=>{ toastEl.style.display='none'; }, time);
+    }
+
+    function init(){
+      pickSolution();
+      guesses = [];
+      current = '';
+      status = 'playing';
+      renderBoard();
+      renderKeyboard();
+    }
+
+    function renderBoard(){
+      boardEl.innerHTML = '';
+      for(let r=0;r<MAX_GUESSES;r++){
+        const row = document.createElement('div'); row.className='row';
+        const guess = guesses[r] || (r===guesses.length ? current : '');
+        for(let i=0;i<WORD_LENGTH;i++){
+          const tile = document.createElement('div'); tile.className='tile';
+          const ch = guess[i] || '';
+          if(ch) tile.classList.add('filled');
+          tile.textContent = ch;
+          // if this row has a submitted guess, show coloring
+          if(guesses[r]){
+            const evaluation = evaluateGuess(guesses[r]);
+            // add flip with slight delay
+            tile.classList.add('flip');
+            setTimeout(()=>{
+              tile.classList.remove('flip');
+              tile.classList.add(evaluation[i]);
+            }, 100 * i);
+          }
+          row.appendChild(tile);
+        }
+        boardEl.appendChild(row);
+      }
+    }
+
+    function renderKeyboard(){
+      keyboardEl.innerHTML='';
+      const rows = ['qwertyuiop','asdfghjkl','zxcvbnm'];
+      for(const r of rows){
+        const row = document.createElement('div'); row.className='keyrow';
+        if(r==='zxcvbnm'){
+          const enter = makeKey('Enter','wide'); row.appendChild(enter);
+        }
+        for(const ch of r){ row.appendChild(makeKey(ch)); }
+        if(r==='zxcvbnm'){
+          const del = makeKey('Del','wide'); row.appendChild(del);
+        }
+        keyboardEl.appendChild(row);
+      }
+    }
+
+    function makeKey(label, extra){
+      const k = document.createElement('button'); k.className='key';
+      if(extra) k.classList.add(extra);
+      k.textContent=label.toUpperCase();
+      k.addEventListener('click', ()=>onKey(label));
+      return k;
+    }
+
+    function onKey(label){
+      if(status!=='playing') return;
+      if(label==='Enter') return submitGuess();
+      if(label==='Del') return deleteLetter();
+      addLetter(label);
+    }
+
+    function addLetter(letter){
+      if(current.length >= WORD_LENGTH) return;
+      current += letter.toLowerCase();
+      renderBoard();
+    }
+    function deleteLetter(){ current = current.slice(0,-1); renderBoard(); }
+
+    function submitGuess(){
+      if(current.length !== WORD_LENGTH){ showToast('Not enough letters'); return; }
+      if(!ALLOWED.includes(current)) { showToast('Not in word list'); return; }
+      guesses.push(current);
+      const evalResult = evaluateGuess(current);
+      renderBoard();
+
+      // update keyboard key classes
+      updateKeyboardColors();
+
+      if(current === solution){ status='won'; showToast('You win!'); }
+      else if(guesses.length >= MAX_GUESSES){ status='lost'; showToast('Out of guesses — word: ' + solution); }
+
+      current='';
+    }
+
+    // returns array of classes: 'correct' 'present' 'absent'
+    function evaluateGuess(guess){
+      const out = Array(WORD_LENGTH).fill('absent');
+      const solChars = solution.split('');
+      // first pass - correct
+      for(let i=0;i<WORD_LENGTH;i++){
+        if(guess[i] === solChars[i]){ out[i]='correct'; solChars[i]=null; }
+      }
+      // second pass - present
+      for(let i=0;i<WORD_LENGTH;i++){
+        if(out[i]==='correct') continue;
+        const idx = solChars.indexOf(guess[i]);
+        if(idx !== -1){ out[i]='present'; solChars[idx]=null; }
+      }
+      return out;
+    }
+
+    function updateKeyboardColors(){
+      const keys = document.querySelectorAll('.key');
+      // compute best status per letter from guesses
+      const best = {}; // letter -> 0 absent 1 present 2 correct
+      for(const g of guesses){
+        const evalr = evaluateGuess(g);
+        for(let i=0;i<g.length;i++){
+          const l = g[i];
+          const v = evalr[i] === 'correct' ? 2 : (evalr[i]==='present' ? 1 : 0);
+          best[l] = Math.max(best[l]||0, v);
+        }
+      }
+      keys.forEach(k=>{
+        const label = k.textContent.toLowerCase();
+        k.classList.remove('absent','present','correct');
+        if(best[label] === 2) k.classList.add('correct');
+        else if(best[label] === 1) k.classList.add('present');
+        else if(best[label] === 0) k.classList.add('absent');
+      });
+    }
+
+    // physical keyboard
+    window.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter') { e.preventDefault(); submitGuess(); }
+      else if(e.key === 'Backspace') { e.preventDefault(); deleteLetter(); }
+      else if(/^[a-zA-Z]$/.test(e.key)) { e.preventDefault(); addLetter(e.key); }
+    });
+
+    newBtn.addEventListener('click', ()=>{
+      // pick random solution (not daily)
+      solution = SOLUTIONS[Math.floor(Math.random()*SOLUTIONS.length)];
+      guesses=[]; current=''; status='playing'; renderBoard(); renderKeyboard(); showToast('New word selected');
+    });
+
+    shareBtn.addEventListener('click', ()=>{
+      if(guesses.length===0){ showToast('No guesses yet'); return; }
+      // simple share text
+      const lines = guesses.map(g=> evaluateGuess(g).map(s=> s==='correct'? '🟩': s==='present'? '🟨':'⬛').join(''));
+      const text = `Wordle prototype - ${guesses.length}/${MAX_GUESSES}\n` + lines.join('\n');
+      if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=> showToast('Copied result to clipboard')); }
+      else{ showToast('Could not copy'); }
+    });
+
+    // init
+    init();
+
+  </script>
+</body>
+</html>
